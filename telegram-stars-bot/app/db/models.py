@@ -1,0 +1,226 @@
+"""SQLAlchemy 2.0 ORM models."""
+
+from __future__ import annotations
+
+import enum
+from datetime import datetime
+from decimal import Decimal
+
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    func,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class OrderStatusEnum(enum.StrEnum):
+    """Local lifecycle states. Mirrors WATA + a few bot-side states."""
+
+    NEW = "New"  # created in DB, order not yet created at WATA
+    PENDING = "Pending"  # awaiting payment
+    REVIEW = "Review"  # paid, awaiting merchant confirmation
+    PAID = "Paid"  # confirmed, being fulfilled
+    SUCCESS = "Success"  # stars delivered
+    REFUNDED = "Refunded"  # rejected / money returned
+    FAIL = "Fail"  # fulfilment failed
+    ERROR = "Error"  # bot-side failure creating the order
+    EXPIRED = "Expired"  # crypto order not paid within the TTL (auto-cancelled)
+
+
+class WithdrawalStatus(enum.StrEnum):
+    """Lifecycle of a partner/referral payout request."""
+
+    PENDING = "Pending"  # awaiting admin review (locks balance)
+    APPROVED = "Approved"  # paid out, proof attached (balance spent)
+    REJECTED = "Rejected"  # declined with a reason (balance released)
+
+
+class WithdrawalMethod(enum.StrEnum):
+    SBP = "sbp"  # bank transfer via СБП
+    CRYPTO = "crypto"  # USDT, TRC20 / TON
+
+
+class ProofType(enum.StrEnum):
+    LINK = "link"  # TRON/TON/USDT explorer transaction link
+    PDF = "pdf"  # uploaded PDF receipt (e.g. ИП payment)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    tg_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    # tg_id of the user who referred this user (set once, on first /start).
+    referred_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    banned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    orders: Mapped[list[Order]] = relationship(back_populates="buyer", lazy="selectin")
+
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    order_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+
+    buyer_tg_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.tg_id", ondelete="CASCADE"), nullable=False
+    )
+    target_username: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Partner attribution: set when the order was placed through a partner bot.
+    partner_owner_tg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    partner_earning: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0"), nullable=False
+    )
+
+    # Payment rail: "wata" (card) or "ggp" (crypto/TON). Crypto orders store the
+    # exact (jittered) TON the buyer must send, the verified on-chain payment proof,
+    # and the GGP delivery transaction id.
+    provider: Mapped[str] = mapped_column(String(8), default="wata", nullable=False)
+    ton_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 9), nullable=True)
+    ton_payment_tx_hash: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    ton_payment_lt: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    ton_payment_utime: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    payment_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ggp_tx_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    count: Mapped[int] = mapped_column(nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"), nullable=False)
+    commission: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0"), nullable=False
+    )
+    margin: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"), nullable=False)
+
+    status: Mapped[str] = mapped_column(
+        String(16), default=OrderStatusEnum.NEW.value, nullable=False
+    )
+    payment_link: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    raw_webhook: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # The bot/chat/message of the order message, so it can be deleted on success.
+    bot_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    message_id: Mapped[int | None] = mapped_column(nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    buyer: Mapped[User] = relationship(back_populates="orders", lazy="selectin")
+
+    __table_args__ = (
+        Index("ix_orders_order_id", "order_id"),
+        Index("ix_orders_buyer_tg_id", "buyer_tg_id"),
+        Index(
+            "uq_orders_verified_ton_amount",
+            "ton_amount",
+            unique=True,
+            postgresql_where=text(
+                "provider = 'ggp' AND payment_expires_at IS NOT NULL " "AND ton_amount IS NOT NULL"
+            ),
+        ),
+        Index(
+            "uq_orders_active_ggp_buyer",
+            "buyer_tg_id",
+            unique=True,
+            postgresql_where=text(
+                "provider = 'ggp' AND status IN ('Pending', 'Review', 'Paid') "
+                "AND buyer_tg_id <> 0"
+            ),
+        ),
+    )
+
+
+class ReferralEarning(Base):
+    """A 5% credit to a referrer for a referred user's paid order.
+
+    One row per order (``order_id`` unique) makes crediting idempotent.
+    """
+
+    __tablename__ = "referral_earnings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    referrer_tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    referred_tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    order_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_referral_earnings_referrer", "referrer_tg_id"),)
+
+
+class Withdrawal(Base):
+    """A payout request against a user's referral balance."""
+
+    __tablename__ = "withdrawals"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    method: Mapped[str] = mapped_column(String(16), nullable=False)
+    destination: Mapped[str] = mapped_column(String(256), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default=WithdrawalStatus.PENDING.value, nullable=False
+    )
+    proof_type: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    proof_value: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    reject_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    resolved_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_withdrawals_user", "user_tg_id"),
+        Index("ix_withdrawals_status", "status"),
+    )
+
+
+class PartnerBot(Base):
+    """A partner-owned bot (created via Telegram managed bots) hosted by us."""
+
+    __tablename__ = "partner_bots"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    bot_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    token: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Partner's own markup (percent) added on top of the operator markup.
+    markup_percent: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), default=Decimal("0"), nullable=False
+    )
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_partner_bots_owner", "owner_tg_id"),)

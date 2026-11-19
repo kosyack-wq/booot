@@ -1,0 +1,947 @@
+"""Minimal dictionary-based i18n for the bot (Russian + English).
+
+Russian is the primary language; English is the secondary ("side") language.
+Strings are looked up by key and language; missing translations fall back to
+Russian, then to the raw key.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+DEFAULT_LANG = "ru"
+SUPPORTED_LANGS = ("ru", "en")
+
+LANGUAGE_NAMES = {"ru": "🇷🇺 Русский", "en": "🇬🇧 English"}
+
+
+def normalize_lang(code: str | None) -> str:
+    """Map a Telegram ``language_code`` (or stored value) to a supported lang."""
+    if not code:
+        return DEFAULT_LANG
+    c = code.lower()
+    if c.startswith("ru"):
+        return "ru"
+    if c.startswith("en"):
+        return "en"
+    return DEFAULT_LANG
+
+
+# key -> {lang -> template}
+TEXTS: dict[str, dict[str, str]] = {
+    # ── Common / menu ─────────────────────────────────────────
+    "welcome": {
+        "ru": (
+            "👋 <b>Привет!</b>\n\n"
+            "Я помогу купить <b>Telegram Stars</b> ⭐ для любого пользователя Telegram.\n"
+            "Оплата картой или через СБП — быстро и безопасно.\n\n"
+            "Нажми кнопку ниже, чтобы начать.\n\n"
+            "Используя бота, вы принимаете оферту и политику конфиденциальности "
+            "(раздел «❓ Помощь»)."
+        ),
+        "en": (
+            "👋 <b>Hi!</b>\n\n"
+            "I'll help you buy <b>Telegram Stars</b> ⭐ for any Telegram user.\n"
+            "Pay by card or SBP — fast and secure.\n\n"
+            "Tap the button below to start.\n\n"
+            "By using the bot you accept the Terms of Service and Privacy Policy "
+            "(see “❓ Help”)."
+        ),
+    },
+    "help": {
+        "ru": (
+            "<b>❓ Как это работает</b>\n\n"
+            "1. Нажми «Купить звёзды» и укажи <b>@username</b> получателя.\n"
+            "2. Выбери количество звёзд (от 50 до 50 000).\n"
+            "3. Получи ссылку на оплату и оплати картой/СБП.\n"
+            "4. После оплаты звёзды доставятся автоматически ⭐\n\n"
+            "Документы и поддержка — на кнопках ниже. Кнопка «Меню» рядом с полем "
+            "ввода всегда открывает главное меню."
+        ),
+        "en": (
+            "<b>❓ How it works</b>\n\n"
+            "1. Tap “Buy Stars” and enter the recipient's <b>@username</b>.\n"
+            "2. Pick the amount of stars (from 50 to 50,000).\n"
+            "3. Get a payment link and pay by card/SBP.\n"
+            "4. After payment the stars are delivered automatically ⭐\n\n"
+            "Documents and support are on the buttons below. The “Menu” button "
+            "next to the input field always opens the main menu."
+        ),
+    },
+    "choose_language": {
+        "ru": "Выберите язык / Choose your language:",
+        "en": "Choose your language / Выберите язык:",
+    },
+    "language_set": {
+        "ru": "✅ Язык переключён на русский.",
+        "en": "✅ Language switched to English.",
+    },
+    "star_rate": {
+        "ru": "💱 Курс: 1 ⭐ ≈ <b>{rate} ₽</b>",
+        "en": "💱 Rate: 1 ⭐ ≈ <b>{rate} ₽</b>",
+    },
+    "star_rate_both": {
+        "ru": (
+            "💱 <b>Курс за 1 ⭐</b>\n"
+            "💳 Картой ≈ <b>{card} ₽</b>\n"
+            "💎 Криптой ≈ <b>{crypto} ₽</b>"
+        ),
+        "en": (
+            "💱 <b>Rate per 1 ⭐</b>\n"
+            "💳 Card ≈ <b>{card} ₽</b>\n"
+            "💎 Crypto ≈ <b>{crypto} ₽</b>"
+        ),
+    },
+    "cancelled": {"ru": "Отменено.", "en": "Cancelled."},
+    "cancelled_menu": {
+        "ru": "Отменено. Возвращаю в меню.",
+        "en": "Cancelled. Back to the menu.",
+    },
+    "send_text_or_cancel": {
+        "ru": "Пожалуйста, отправьте текстовое сообщение или нажмите «Отмена».",
+        "en": "Please send a text message or tap “Cancel”.",
+    },
+    # ── Buy flow ──────────────────────────────────────────────
+    "ask_username": {
+        "ru": "Кому отправляем звёзды?\nУкажите <b>@username</b> получателя в Telegram:",
+        "en": "Who are the stars for?\nEnter the recipient's Telegram <b>@username</b>:",
+    },
+    "username_invalid": {
+        "ru": (
+            "Это не похоже на корректный @username (5–32 символа, буквы/цифры/_). "
+            "Попробуйте ещё раз:"
+        ),
+        "en": (
+            "That doesn't look like a valid @username (5–32 chars, letters/digits/_). "
+            "Please try again:"
+        ),
+    },
+    "enter_other_username": {
+        "ru": "Введите другой @username:",
+        "en": "Enter another @username:",
+    },
+    "no_username": {
+        "ru": "У вас не задан @username в Telegram. Введите получателя вручную.",
+        "en": "You don't have a Telegram @username set. Enter the recipient manually.",
+    },
+    "user_found": {
+        "ru": "✅ Пользователь <b>@{username}</b> найден.\n\nСколько звёзд отправить?",
+        "en": "✅ User <b>@{username}</b> found.\n\nHow many stars to send?",
+    },
+    "ask_custom_count": {
+        "ru": "Введите количество звёзд числом (от {min} до {max}):",
+        "en": "Enter the number of stars (from {min} to {max}):",
+    },
+    "not_integer": {
+        "ru": "Нужно целое число. Попробуйте ещё раз:",
+        "en": "A whole number is required. Please try again:",
+    },
+    "count_out_of_range": {
+        "ru": "Количество должно быть от {min} до {max}. Попробуйте ещё раз:",
+        "en": "The amount must be between {min} and {max}. Please try again:",
+    },
+    "session_expired": {
+        "ru": "Сессия истекла. Откройте меню заново кнопкой «Меню».",
+        "en": "Session expired. Open the menu again with the “Menu” button.",
+    },
+    "session_expired_alert": {
+        "ru": "Сессия истекла, начните заново.",
+        "en": "Session expired, please start over.",
+    },
+    "quote": {
+        "ru": (
+            "🧾 <b>Проверьте заказ</b>\n\n"
+            "Получатель: <b>@{target}</b>\n"
+            "Количество: <b>{count}</b> ⭐\n"
+            "К оплате: <b>{amount} ₽</b>\n\n"
+            "Нажмите «Оплатить», чтобы получить ссылку."
+        ),
+        "en": (
+            "🧾 <b>Review your order</b>\n\n"
+            "Recipient: <b>@{target}</b>\n"
+            "Amount: <b>{count}</b> ⭐\n"
+            "To pay: <b>{amount} ₽</b>\n\n"
+            "Tap “Pay” to get the payment link."
+        ),
+    },
+    "quote_header": {
+        "ru": (
+            "🧾 <b>Проверьте заказ</b>\n\n"
+            "Получатель: <b>@{target}</b>\n"
+            "Количество: <b>{count}</b> ⭐"
+        ),
+        "en": (
+            "🧾 <b>Review your order</b>\n\n"
+            "Recipient: <b>@{target}</b>\n"
+            "Amount: <b>{count}</b> ⭐"
+        ),
+    },
+    "quote_line_card": {
+        "ru": "💳 Картой: <b>{card} ₽</b>",
+        "en": "💳 Card: <b>{card} ₽</b>",
+    },
+    "quote_line_crypto": {
+        "ru": "💎 Криптой (TON): <b>{ton} TON</b>",
+        "en": "💎 Crypto (TON): <b>{ton} TON</b>",
+    },
+    "crypto_rub_estimate": {
+        "ru": " (≈ {rub} ₽)",
+        "en": " (≈ {rub} ₽)",
+    },
+    "quote_footer": {
+        "ru": "Выберите способ оплаты.",
+        "en": "Choose a payment method.",
+    },
+    "crypto_instructions": {
+        "ru": (
+            "💎 <b>Оплата криптой (TON)</b>\n\n"
+            "<b>{count}</b> ⭐ для <b>@{target}</b>\n\n"
+            "Отправьте эту сумму одной транзакцией:\n"
+            "Сумма: <code>{ton}</code> TON\n"
+            "Адрес: <code>{address}</code>\n"
+            "Комментарий (memo): <code>{memo}</code>\n\n"
+            "Важно: укажите memo точно как написано — без него платёж нельзя "
+            "автоматически привязать к заказу.\n\n"
+            "После оплаты нажмите «✅ Я оплатил» — как только средства поступят, "
+            "звёзды придут автоматически (обычно пара минут).\n"
+            "Оплатите в течение ~{ttl} мин. После закрытия окна не отправляйте новый "
+            "перевод; уже начатый платёж бот ещё несколько минут будет проверять.\n\n"
+            "Оплатили, но звёзды не пришли? Напишите @nnstorecontactbot."
+        ),
+        "en": (
+            "💎 <b>Pay with crypto (TON)</b>\n\n"
+            "<b>{count}</b> ⭐ for <b>@{target}</b>\n\n"
+            "Send this amount in a single transaction:\n"
+            "Amount: <code>{ton}</code> TON\n"
+            "Address: <code>{address}</code>\n"
+            "Comment (memo): <code>{memo}</code>\n\n"
+            "Important: enter the memo exactly as shown; without it the payment "
+            "cannot be matched automatically.\n\n"
+            "After paying, tap “✅ I paid” — once the funds arrive, the stars are "
+            "delivered automatically (usually a couple of minutes).\n"
+            "Pay within ~{ttl} min. Once the window closes, do not send a new transfer; "
+            "the bot will keep checking an already-started payment for a few minutes.\n\n"
+            "Paid but no stars? Message @nnstorecontactbot."
+        ),
+    },
+    "btn_crypto_paid": {"ru": "✅ Я оплатил", "en": "✅ I paid"},
+    "btn_crypto_recheck": {"ru": "🔄 Проверить выдачу", "en": "🔄 Check delivery"},
+    "btn_crypto_cancel": {"ru": "❌ Отменить заказ", "en": "❌ Cancel order"},
+    "crypto_already_pending": {
+        "ru": (
+            "У вас уже есть незавершённый крипто-заказ. До конца оплаты осталось "
+            "около {ttl} мин. Оплатите его или отмените — потом можно создать новый."
+        ),
+        "en": (
+            "You already have an unpaid crypto order with about {ttl} min remaining. "
+            "Pay or cancel it before creating another one."
+        ),
+    },
+    "crypto_cancelled": {
+        "ru": (
+            "Оплата закрыта. Не отправляйте новый перевод. Ещё несколько минут "
+            "проверяем TON на случай, если перевод уже был отправлен."
+        ),
+        "en": (
+            "Payment is closed. Do not send a new transfer. We will keep checking TON "
+            "for a few minutes in case one was already broadcast."
+        ),
+    },
+    "crypto_cancel_gone": {
+        "ru": "Этот заказ уже нельзя отменить (оплачен, выдан или отменён).",
+        "en": "This order can no longer be cancelled (paid, delivered or already cancelled).",
+    },
+    "crypto_checking": {
+        "ru": "Проверяю поступление средств…",
+        "en": "Checking for your payment…",
+    },
+    "crypto_not_funded": {
+        "ru": (
+            "Пока не нашёл подтверждённую транзакцию TON с точной суммой и memo. "
+            "Если вы только что оплатили — подождите пару минут и нажмите ещё раз."
+        ),
+        "en": (
+            "No finalized TON transaction with the exact amount and memo was found yet. "
+            "If you just paid, wait a couple of minutes and tap again."
+        ),
+    },
+    "crypto_payment_verified": {
+        "ru": (
+            "✅ <b>Платёж подтверждён в блокчейне TON</b>\n\n"
+            "<b>{count}</b> ⭐ для <b>@{target}</b>\n\n"
+            "Заказ уже в очереди на выдачу. Звёзды придут автоматически — "
+            "не отправляйте оплату повторно."
+        ),
+        "en": (
+            "✅ <b>Payment confirmed on the TON blockchain</b>\n\n"
+            "<b>{count}</b> ⭐ for <b>@{target}</b>\n\n"
+            "The order is queued for delivery. The stars will arrive automatically; "
+            "do not send another payment."
+        ),
+    },
+    "crypto_payment_verified_waiting": {
+        "ru": (
+            "Платёж подтверждён в TON. Заказ уже в очереди на выдачу — "
+            "повторно платить не нужно."
+        ),
+        "en": "The TON payment is confirmed. Delivery is queued; do not pay again.",
+    },
+    "crypto_payment_window_closed_alert": {
+        "ru": "Срок оплаты закончился. Не отправляйте новый перевод по этим реквизитам.",
+        "en": "The payment window has closed. Do not send a new transfer for this invoice.",
+    },
+    "crypto_payment_window_closed": {
+        "ru": (
+            "⏱ <b>Срок оплаты заказа закончился</b>\n\n"
+            "<b>{count}</b> ⭐ для <b>@{target}</b>\n\n"
+            "Не отправляйте новый перевод. Если вы оплатили вовремя, бот ещё несколько "
+            "минут проверит финализацию и индексацию TON и выдаст звёзды автоматически."
+        ),
+        "en": (
+            "⏱ <b>This invoice's payment window has closed</b>\n\n"
+            "<b>{count}</b> ⭐ for <b>@{target}</b>\n\n"
+            "Do not send a new transfer. If you paid on time, the bot will keep checking "
+            "TON finality/indexing for a few minutes and deliver automatically."
+        ),
+    },
+    "star_rate_crypto": {
+        "ru": "💎 Курс: <b>1</b> ⭐ ≈ <b>{rate} ₽</b> (оплата криптой TON)",
+        "en": "💎 Rate: <b>1</b> ⭐ ≈ <b>{rate} ₽</b> (pay with TON crypto)",
+    },
+    "crypto_unavailable": {
+        "ru": "Оплата криптой временно недоступна. Попробуйте оплату картой.",
+        "en": "Crypto payment is temporarily unavailable. Please use card payment.",
+    },
+    "creating_order": {"ru": "Создаю заказ…", "en": "Creating the order…"},
+    "too_many_orders": {
+        "ru": (
+            "⚠️ Слишком много незавершённых заказов (лимит {limit}). Оплатите или "
+            "дождитесь истечения текущих и попробуйте снова."
+        ),
+        "en": (
+            "⚠️ Too many unfinished orders (limit {limit}). Pay or wait for the "
+            "current ones to expire, then try again."
+        ),
+    },
+    "order_created": {
+        "ru": (
+            "💳 Заказ создан!\n\n"
+            "<b>{count}</b> ⭐ для <b>@{target}</b>\n"
+            "К оплате: <b>{amount} ₽</b>\n\n"
+            "Оплатите по ссылке ниже. После оплаты звёзды придут автоматически."
+        ),
+        "en": (
+            "💳 Order created!\n\n"
+            "<b>{count}</b> ⭐ for <b>@{target}</b>\n"
+            "To pay: <b>{amount} ₽</b>\n\n"
+            "Pay via the link below. The stars arrive automatically after payment."
+        ),
+    },
+    "test_order_created": {
+        "ru": (
+            "🧪 <b>ТЕСТОВЫЙ заказ</b>\n\n"
+            "<b>{count}</b> ⭐ для <b>@{target}</b>\n"
+            "Сумма: <b>{amount} ₽</b>\n\n"
+            "Платёжная ссылка не создаётся. Нажмите кнопку ниже, чтобы сымитировать "
+            "успешную оплату и проверить начисления."
+        ),
+        "en": (
+            "🧪 <b>TEST order</b>\n\n"
+            "<b>{count}</b> ⭐ for <b>@{target}</b>\n"
+            "Amount: <b>{amount} ₽</b>\n\n"
+            "No payment link is created. Tap the button below to simulate a "
+            "successful payment and check the payouts."
+        ),
+    },
+    "test_paid_done": {
+        "ru": "🧪 Тестовая оплата проведена! Звёзды «отправлены», начисления обработаны.",
+        "en": "🧪 Test payment completed! Stars “delivered”, payouts processed.",
+    },
+    "checking_status": {"ru": "Проверяю статус…", "en": "Checking status…"},
+    "order_not_found": {"ru": "Заказ не найден.", "en": "Order not found."},
+    "order_status": {
+        "ru": "Статус заказа: <b>{label}</b>",
+        "en": "Order status: <b>{label}</b>",
+    },
+    # ── Profile & history ─────────────────────────────────────
+    "profile": {
+        "ru": (
+            "👤 <b>Профиль</b>\n\n"
+            "🆔 ID: <code>{id}</code>\n"
+            "📅 Регистрация: {registered}\n\n"
+            "⭐ Куплено звёзд: <b>{stars}</b>\n"
+            "🧾 Заказов: <b>{orders}</b>\n"
+            "💸 Потрачено: <b>{spent} ₽</b>\n\n"
+            "🤝 Приглашено: <b>{referrals}</b>\n"
+            "💰 Заработано: <b>{earned} ₽</b>\n"
+            "✅ Доступно к выводу: <b>{available} ₽</b>"
+        ),
+        "en": (
+            "👤 <b>Profile</b>\n\n"
+            "🆔 ID: <code>{id}</code>\n"
+            "📅 Registered: {registered}\n\n"
+            "⭐ Stars bought: <b>{stars}</b>\n"
+            "🧾 Orders: <b>{orders}</b>\n"
+            "💸 Spent: <b>{spent} ₽</b>\n\n"
+            "🤝 Invited: <b>{referrals}</b>\n"
+            "💰 Earned: <b>{earned} ₽</b>\n"
+            "✅ Available to withdraw: <b>{available} ₽</b>"
+        ),
+    },
+    # ── History & admin ───────────────────────────────────────
+    "orders_header": {
+        "ru": "<b>🧾 Ваши последние заказы:</b>\n",
+        "en": "<b>🧾 Your recent orders:</b>\n",
+    },
+    "orders_empty": {
+        "ru": "У вас пока нет заказов.",
+        "en": "You don't have any orders yet.",
+    },
+    "order_line": {
+        "ru": "• {count} ⭐ → @{target} — {amount} ₽ — {status}",
+        "en": "• {count} ⭐ → @{target} — {amount} ₽ — {status}",
+    },
+    "stats": {
+        "ru": (
+            "<b>📊 Статистика</b>\n\n"
+            "Всего заказов: <b>{total}</b>\n"
+            "Оплачено: <b>{paid}</b>\n"
+            "Оборот: <b>{turnover} ₽</b>\n"
+            "Суммарная маржа: <b>{margin} ₽</b>"
+        ),
+        "en": (
+            "<b>📊 Statistics</b>\n\n"
+            "Total orders: <b>{total}</b>\n"
+            "Paid: <b>{paid}</b>\n"
+            "Turnover: <b>{turnover} ₽</b>\n"
+            "Total margin: <b>{margin} ₽</b>"
+        ),
+    },
+    "admin_only": {
+        "ru": "Доступно только администраторам.",
+        "en": "Available to administrators only.",
+    },
+    # ── Terms of service ──────────────────────────────────────
+    "terms": {
+        "ru": "📄 Пользовательское соглашение (публичная оферта):\n{url}",
+        "en": "📄 Terms of Service (public offer):\n{url}",
+    },
+    "terms_unavailable": {
+        "ru": "Пользовательское соглашение пока не опубликовано.",
+        "en": "The Terms of Service are not published yet.",
+    },
+    "privacy": {
+        "ru": "🔒 Политика конфиденциальности и обработки персональных данных:\n{url}",
+        "en": "🔒 Privacy Policy and personal data processing:\n{url}",
+    },
+    "privacy_unavailable": {
+        "ru": "Политика конфиденциальности пока не опубликована.",
+        "en": "The Privacy Policy is not published yet.",
+    },
+    # ── Referral program ──────────────────────────────────────
+    "referral_overview": {
+        "ru": (
+            "🤝 <b>Партнёрская программа</b>\n\n"
+            "Приглашайте друзей и получайте <b>{percent}%</b> с каждой их оплаты.\n\n"
+            "Ваша ссылка:\n{link}\n\n"
+            "👥 Приглашено: <b>{referrals}</b>\n"
+            "💰 Всего начислено: <b>{earned} ₽</b>\n"
+            "✅ Доступно к выводу: <b>{available} ₽</b>"
+        ),
+        "en": (
+            "🤝 <b>Referral program</b>\n\n"
+            "Invite friends and earn <b>{percent}%</b> of each of their payments.\n\n"
+            "Your link:\n{link}\n\n"
+            "👥 Invited: <b>{referrals}</b>\n"
+            "💰 Total earned: <b>{earned} ₽</b>\n"
+            "✅ Available to withdraw: <b>{available} ₽</b>"
+        ),
+    },
+    "referral_earned_notify": {
+        "ru": "🤝 Вам начислено <b>{amount} ₽</b> по партнёрской программе!",
+        "en": "🤝 You earned <b>{amount} ₽</b> from the referral program!",
+    },
+    "partner_earned_notify": {
+        "ru": (
+            "🤝 Продажа через вашего бота: <b>{count}</b> ⭐ для <b>@{target}</b>.\n"
+            "Вам начислено <b>{amount} ₽</b>!"
+        ),
+        "en": (
+            "🤝 Sale via your bot: <b>{count}</b> ⭐ for <b>@{target}</b>.\n"
+            "You earned <b>{amount} ₽</b>!"
+        ),
+    },
+    # ── Withdrawals (user) ────────────────────────────────────
+    "withdraw_choose_method": {
+        "ru": "Выберите способ вывода средств:",
+        "en": "Choose a withdrawal method:",
+    },
+    "withdraw_ask_destination_sbp": {
+        "ru": "Отправьте реквизиты для СБП (номер телефона и банк получателя):",
+        "en": "Send your СБП details (phone number and recipient bank):",
+    },
+    "withdraw_ask_destination_crypto": {
+        "ru": "Отправьте адрес кошелька USDT (сеть TRC20 или TON):",
+        "en": "Send your USDT wallet address (TRC20 or TON network):",
+    },
+    "withdraw_ask_amount": {
+        "ru": "Введите сумму вывода в ₽.\nДоступно: <b>{available} ₽</b>, минимум: <b>{min} ₽</b>.",
+        "en": "Enter the amount in ₽.\nAvailable: <b>{available} ₽</b>, minimum: <b>{min} ₽</b>.",
+    },
+    "withdraw_not_number": {
+        "ru": "Нужно число. Введите сумму вывода в ₽:",
+        "en": "A number is required. Enter the amount in ₽:",
+    },
+    "wd_has_pending": {
+        "ru": "У вас уже есть заявка на вывод в обработке. Дождитесь её решения.",
+        "en": "You already have a withdrawal in progress. Please wait for it to be resolved.",
+    },
+    "wd_below_min": {
+        "ru": "Минимальная сумма вывода — {min} ₽.",
+        "en": "The minimum withdrawal amount is {min} ₽.",
+    },
+    "wd_over_balance": {
+        "ru": "Недостаточно средств. Доступно: {available} ₽.",
+        "en": "Insufficient balance. Available: {available} ₽.",
+    },
+    "withdraw_created": {
+        "ru": (
+            "✅ Заявка на вывод <b>{amount} ₽</b> создана (#{id}).\n"
+            "Обработка — до 5 рабочих дней."
+        ),
+        "en": (
+            "✅ Withdrawal request for <b>{amount} ₽</b> created (#{id}).\n"
+            "Processed within 5 business days."
+        ),
+    },
+    "withdraw_cancelled": {"ru": "Вывод отменён.", "en": "Withdrawal cancelled."},
+    "withdrawals_empty": {
+        "ru": "У вас пока нет заявок на вывод.",
+        "en": "You don't have any withdrawal requests yet.",
+    },
+    "withdrawals_header": {"ru": "<b>📜 Ваши выводы:</b>\n", "en": "<b>📜 Your withdrawals:</b>\n"},
+    "withdrawal_line": {
+        "ru": "• #{id} — {amount} ₽ — {method} — {status}",
+        "en": "• #{id} — {amount} ₽ — {method} — {status}",
+    },
+    "withdraw_approved_notify": {
+        "ru": "✅ Ваш вывод #{id} на <b>{amount} ₽</b> выполнен.",
+        "en": "✅ Your withdrawal #{id} for <b>{amount} ₽</b> has been paid.",
+    },
+    "withdraw_rejected_notify": {
+        "ru": (
+            "❌ Ваш вывод #{id} отклонён.\n" "Причина: {reason}\n" "Средства возвращены на баланс."
+        ),
+        "en": (
+            "❌ Your withdrawal #{id} was rejected.\n"
+            "Reason: {reason}\n"
+            "The funds were returned to your balance."
+        ),
+    },
+    "wd_status_Pending": {"ru": "⏳ в обработке", "en": "⏳ pending"},
+    "wd_status_Approved": {"ru": "✅ выплачено", "en": "✅ paid"},
+    "wd_status_Rejected": {"ru": "❌ отклонено", "en": "❌ rejected"},
+    "method_sbp": {"ru": "СБП", "en": "СБП"},
+    "method_crypto": {"ru": "USDT (TRC20/TON)", "en": "USDT (TRC20/TON)"},
+    # ── Withdrawals (admin moderation) ────────────────────────
+    "admin_new_withdrawal": {
+        "ru": (
+            "🆕 <b>Заявка на вывод #{id}</b>\n"
+            "Пользователь: {user}\n"
+            "Сумма: <b>{amount} ₽</b>\n"
+            "Способ: {method}\n"
+            "Реквизиты: <code>{destination}</code>"
+        ),
+        "en": (
+            "🆕 <b>Withdrawal request #{id}</b>\n"
+            "User: {user}\n"
+            "Amount: <b>{amount} ₽</b>\n"
+            "Method: {method}\n"
+            "Details: <code>{destination}</code>"
+        ),
+    },
+    "admin_ask_proof": {
+        "ru": (
+            "Отправьте пруф оплаты для заявки #{id}:\n"
+            "ссылку на транзакцию (TRON/TON) или PDF-файл (для оплаты через ИП)."
+        ),
+        "en": (
+            "Send proof of payment for request #{id}:\n"
+            "a transaction link (TRON/TON) or a PDF file (for ИП payments)."
+        ),
+    },
+    "admin_proof_invalid": {
+        "ru": "Пришлите ссылку (http/https) или PDF-документ.",
+        "en": "Send a link (http/https) or a PDF document.",
+    },
+    "admin_ask_reject_reason": {
+        "ru": "Укажите причину отклонения заявки #{id}:",
+        "en": "Enter the rejection reason for request #{id}:",
+    },
+    "admin_withdrawal_done": {
+        "ru": "Готово. Заявка #{id} обработана.",
+        "en": "Done. Request #{id} has been processed.",
+    },
+    "admin_withdrawal_gone": {
+        "ru": "Заявка не найдена или уже обработана.",
+        "en": "Request not found or already processed.",
+    },
+    "admin_proof_caption": {
+        "ru": "Пруф по выводу #{id}",
+        "en": "Proof for withdrawal #{id}",
+    },
+    # ── Partner bots ──────────────────────────────────────────
+    "partner_overview": {
+        "ru": (
+            "🧩 <b>Партнёрам: свой бот</b>\n\n"
+            "Создайте собственного бота для продажи звёзд — он работает на нашей "
+            "инфраструктуре, платежи и выдача звёзд на нашей стороне.\n\n"
+            "Вы сами задаёте наценку — до <b>{max}%</b> — и зарабатываете её с каждой "
+            "продажи. Мы удерживаем лишь <b>{cut}%</b> от вашей наценки. Доход копится "
+            "на общий баланс и выводится в разделе «Партнёрка».\n\n"
+            "Ваших ботов: <b>{count}</b>"
+        ),
+        "en": (
+            "🧩 <b>Partners: your own bot</b>\n\n"
+            "Create your own Stars-selling bot — it runs on our infrastructure, with "
+            "payments and delivery on our side.\n\n"
+            "You set your own markup — up to <b>{max}%</b> — and earn it on every sale. "
+            "We keep just <b>{cut}%</b> of your markup. Earnings accrue to your shared "
+            "balance and are paid out in the “Referrals” section.\n\n"
+            "Your bots: <b>{count}</b>"
+        ),
+    },
+    "partner_create_prompt": {
+        "ru": (
+            "👇 Внизу, у поля ввода, появилась кнопка <b>«➕ Создать бота»</b> — "
+            "нажмите её. Telegram сам спросит имя и @username, токен подключится "
+            "автоматически."
+        ),
+        "en": (
+            "👇 A <b>“➕ Create a bot”</b> button has appeared at the bottom, by the "
+            "input field — tap it. Telegram will ask for a name and @username; the "
+            "token connects automatically."
+        ),
+    },
+    "partner_bot_created": {
+        "ru": (
+            "✅ Бот <b>@{username}</b> создан и запущен!\n\n"
+            "Откройте его и нажмите «Запустить». Не забудьте задать наценку в «Мои боты»."
+        ),
+        "en": (
+            "✅ Bot <b>@{username}</b> created and running!\n\n"
+            "Open it and tap “Start”. Don't forget to set your markup in “My bots”."
+        ),
+    },
+    "partner_create_failed": {
+        "ru": "Не удалось подключить бота. Попробуйте ещё раз.",
+        "en": "Could not connect the bot. Please try again.",
+    },
+    "partner_bots_empty": {
+        "ru": "У вас пока нет ботов.",
+        "en": "You don't have any bots yet.",
+    },
+    "partner_bots_header": {
+        "ru": "<b>🧩 Ваши боты</b>\nВыберите бота, чтобы задать наценку:",
+        "en": "<b>🧩 Your bots</b>\nPick a bot to set its markup:",
+    },
+    "partner_ask_markup": {
+        "ru": "Введите вашу наценку в % (от 0 до {max}):",
+        "en": "Enter your markup in % (from 0 to {max}):",
+    },
+    "partner_markup_invalid": {
+        "ru": "Нужно число от 0 до {max}. Попробуйте ещё раз:",
+        "en": "Enter a number from 0 to {max}. Try again:",
+    },
+    "partner_markup_set": {
+        "ru": "✅ Наценка для <b>@{username}</b>: <b>{markup}%</b>",
+        "en": "✅ Markup for <b>@{username}</b>: <b>{markup}%</b>",
+    },
+    "partner_only_one": {
+        "ru": "У вас уже есть бот. Можно создать только одного.",
+        "en": "You already have a bot. Only one is allowed.",
+    },
+    "partner_enabled": {
+        "ru": "▶️ Бот включён.",
+        "en": "▶️ Bot enabled.",
+    },
+    "partner_disabled": {
+        "ru": "⏸ Бот выключен. Он больше не принимает заказы.",
+        "en": "⏸ Bot disabled. It no longer accepts orders.",
+    },
+    "owner_panel": {
+        "ru": (
+            "⚙️ <b>Настройки вашего бота</b>\n\n"
+            "Бот: <b>@{username}</b>\n"
+            "Ваша наценка: <b>{markup}%</b> (макс. {max}%)\n"
+            "Наша комиссия: <b>{cut}%</b> от вашей наценки\n"
+            "Статус: {status}"
+        ),
+        "en": (
+            "⚙️ <b>Your bot settings</b>\n\n"
+            "Bot: <b>@{username}</b>\n"
+            "Your markup: <b>{markup}%</b> (max {max}%)\n"
+            "Our fee: <b>{cut}%</b> of your markup\n"
+            "Status: {status}"
+        ),
+    },
+    "owner_status_on": {"ru": "▶️ включён", "en": "▶️ enabled"},
+    "owner_status_off": {"ru": "⏸ выключен", "en": "⏸ disabled"},
+    # ── Admin panel ───────────────────────────────────────────
+    "admin_panel": {
+        "ru": "🛠 <b>Админ-панель</b>\n\nВыберите раздел:",
+        "en": "🛠 <b>Admin panel</b>\n\nChoose a section:",
+    },
+    "admin_stats": {
+        "ru": (
+            "📊 <b>Продажи (оплачено)</b>\n\n"
+            "За 24 часа: <b>{d1_stars}</b> ⭐, {d1_orders} зак., {d1_revenue} ₽\n"
+            "За 3 дня: <b>{d3_stars}</b> ⭐, {d3_orders} зак., {d3_revenue} ₽\n"
+            "За 7 дней: <b>{d7_stars}</b> ⭐, {d7_orders} зак., {d7_revenue} ₽\n"
+            "За 30 дней: <b>{d30_stars}</b> ⭐, {d30_orders} зак., {d30_revenue} ₽\n\n"
+            "Маржа за 30 дней: <b>{d30_margin} ₽</b>\n\n"
+            "👥 Пользователей: <b>{users}</b>\n"
+            "💰 Партнёрских начислений: <b>{ref_earned} ₽</b> "
+            "(к выплате {ref_outstanding} ₽)"
+        ),
+        "en": (
+            "📊 <b>Sales (paid)</b>\n\n"
+            "24 hours: <b>{d1_stars}</b> ⭐, {d1_orders} orders, {d1_revenue} ₽\n"
+            "3 days: <b>{d3_stars}</b> ⭐, {d3_orders} orders, {d3_revenue} ₽\n"
+            "7 days: <b>{d7_stars}</b> ⭐, {d7_orders} orders, {d7_revenue} ₽\n"
+            "30 days: <b>{d30_stars}</b> ⭐, {d30_orders} orders, {d30_revenue} ₽\n\n"
+            "Margin (30 days): <b>{d30_margin} ₽</b>\n\n"
+            "👥 Users: <b>{users}</b>\n"
+            "💰 Partner/referral credited: <b>{ref_earned} ₽</b> "
+            "(owed {ref_outstanding} ₽)"
+        ),
+    },
+    "admin_ask_user_id": {
+        "ru": "Отправьте Telegram ID или @username пользователя:",
+        "en": "Send the user's Telegram ID or @username:",
+    },
+    "admin_bad_user_id": {
+        "ru": "Не найдено. Отправьте числовой ID или @username:",
+        "en": "Not found. Send a numeric ID or @username:",
+    },
+    "admin_users_header": {
+        "ru": "👥 <b>Последние пользователи</b>\nВыберите или нажмите «Поиск»:",
+        "en": "👥 <b>Recent users</b>\nPick one or tap “Search”:",
+    },
+    "admin_users_empty": {
+        "ru": "Пользователей пока нет. Нажмите «Поиск», чтобы найти по ID/@username.",
+        "en": "No users yet. Tap “Search” to look up by ID/@username.",
+    },
+    "btn_page_prev": {"ru": "◀️ Назад", "en": "◀️ Prev"},
+    "btn_page_next": {"ru": "Вперёд ▶️", "en": "Next ▶️"},
+    "btn_admin_users_back": {"ru": "⬅️ К списку пользователей", "en": "⬅️ Back to users"},
+    "pay_method_wata": {"ru": "картой (WATA)", "en": "card (WATA)"},
+    "pay_method_ggp": {"ru": "криптой (TON)", "en": "crypto (TON)"},
+    "admin_purchase_notify": {
+        "ru": (
+            "🛒 <b>Новая покупка</b>\n\n"
+            "<b>{count}</b> ⭐ для <b>@{target}</b>\n"
+            "Сумма: <b>{amount} ₽</b>\n"
+            "Покупатель: {buyer}\n"
+            "Способ: {method}"
+        ),
+        "en": (
+            "🛒 <b>New purchase</b>\n\n"
+            "<b>{count}</b> ⭐ for <b>@{target}</b>\n"
+            "Amount: <b>{amount} ₽</b>\n"
+            "Buyer: {buyer}\n"
+            "Method: {method}"
+        ),
+    },
+    "admin_user_not_found": {
+        "ru": "Пользователь не найден.",
+        "en": "User not found.",
+    },
+    "admin_user_profile": {
+        "ru": (
+            "👤 <b>Пользователь</b>\n\n"
+            "🆔 ID: <code>{id}</code>\n"
+            "Username: {username}\n"
+            "📅 Регистрация: {registered}\n"
+            "Статус: {status}\n\n"
+            "⭐ Куплено: <b>{stars}</b> ({orders} зак.)\n"
+            "💸 Потрачено: <b>{spent} ₽</b>\n"
+            "🤝 Приглашено: <b>{referrals}</b>\n"
+            "💰 Заработано: <b>{earned} ₽</b> (доступно {available} ₽)"
+        ),
+        "en": (
+            "👤 <b>User</b>\n\n"
+            "🆔 ID: <code>{id}</code>\n"
+            "Username: {username}\n"
+            "📅 Registered: {registered}\n"
+            "Status: {status}\n\n"
+            "⭐ Bought: <b>{stars}</b> ({orders} orders)\n"
+            "💸 Spent: <b>{spent} ₽</b>\n"
+            "🤝 Invited: <b>{referrals}</b>\n"
+            "💰 Earned: <b>{earned} ₽</b> (available {available} ₽)"
+        ),
+    },
+    "admin_status_active": {"ru": "✅ активен", "en": "✅ active"},
+    "admin_status_banned": {"ru": "🚫 забанен", "en": "🚫 banned"},
+    "admin_user_banned": {"ru": "🚫 Пользователь забанен.", "en": "🚫 User banned."},
+    "admin_user_unbanned": {"ru": "✅ Пользователь разбанен.", "en": "✅ User unbanned."},
+    # ── Status labels ─────────────────────────────────────────
+    "status_New": {"ru": "🆕 создаётся", "en": "🆕 creating"},
+    "status_Pending": {"ru": "⏳ ожидает оплаты", "en": "⏳ awaiting payment"},
+    "status_Review": {"ru": "🔎 проверяется", "en": "🔎 under review"},
+    "status_Paid": {"ru": "✅ оплачен, исполняется", "en": "✅ paid, processing"},
+    "status_Success": {"ru": "⭐ звёзды отправлены", "en": "⭐ stars delivered"},
+    "status_Refunded": {"ru": "↩️ возврат средств", "en": "↩️ refunded"},
+    "status_Fail": {"ru": "❌ ошибка исполнения", "en": "❌ fulfilment failed"},
+    "status_Error": {"ru": "⚠️ не удалось создать", "en": "⚠️ creation failed"},
+    # ── Webhook buyer notifications ───────────────────────────
+    "notify_Paid": {
+        "ru": "✅ Оплата получена! Звёзды отправляются ⭐",
+        "en": "✅ Payment received! The stars are on their way ⭐",
+    },
+    "notify_Success": {
+        "ru": "⭐ Готово! Звёзды отправлены получателю.",
+        "en": "⭐ Done! The stars have been delivered.",
+    },
+    "notify_Refunded": {
+        "ru": "↩️ Заказ не подтверждён, средства возвращены.",
+        "en": "↩️ Order not confirmed, your money has been refunded.",
+    },
+    "notify_Fail": {
+        "ru": "❌ Не удалось исполнить заказ. Попробуйте снова.",
+        "en": "❌ The order could not be fulfilled. Please try again.",
+    },
+    "crypto_failed_contact": {
+        "ru": (
+            "⚠️ Мы получили вашу оплату, но не смогли автоматически отправить звёзды.\n"
+            "Напишите @nnstorecontactbot — мы всё решим."
+        ),
+        "en": (
+            "⚠️ We received your payment but couldn't deliver the stars automatically.\n"
+            "Message @nnstorecontactbot and we'll sort it out."
+        ),
+    },
+    # ── WATA error messages ───────────────────────────────────
+    "err_invalid_data": {
+        "ru": "Переданы неверные данные заказа. Попробуйте ещё раз.",
+        "en": "Invalid order data. Please try again.",
+    },
+    "err_user_not_found": {
+        "ru": "Пользователь Telegram с таким @username не найден.",
+        "en": "No Telegram user with that @username was found.",
+    },
+    "err_count_range": {
+        "ru": "Количество звёзд должно быть от 50 до 50 000.",
+        "en": "The number of stars must be between 50 and 50,000.",
+    },
+    "err_create_failed": {
+        "ru": "Не удалось создать заказ. Попробуйте позже.",
+        "en": "Could not create the order. Please try again later.",
+    },
+    "err_order_not_found": {"ru": "Заказ не найден.", "en": "Order not found."},
+    "err_payment_expired": {
+        "ru": "Истёк срок оплаты заказа. Создайте новый заказ.",
+        "en": "The payment window has expired. Please create a new order.",
+    },
+    "err_link_unavailable": {
+        "ru": "Ссылка на оплату недоступна или уже оплачена.",
+        "en": "The payment link is unavailable or already paid.",
+    },
+    "err_auth": {
+        "ru": "Ошибка авторизации платёжного сервиса. Попробуйте позже.",
+        "en": "Payment service authorization error. Please try again later.",
+    },
+    "err_rate_limit": {
+        "ru": "Слишком много запросов к платёжному сервису. Подождите немного.",
+        "en": "Too many requests to the payment service. Please wait a moment.",
+    },
+    "err_network": {
+        "ru": "Платёжный сервис временно недоступен. Попробуйте через минуту.",
+        "en": "The payment service is temporarily unavailable. Try again in a minute.",
+    },
+    "err_generic": {
+        "ru": "Произошла ошибка при обращении к платёжному сервису. Попробуйте позже.",
+        "en": "An error occurred while contacting the payment service. Try again later.",
+    },
+    # ── Crypto (GreenGamePay) error messages ──────────────────
+    "crypto_err_network": {
+        "ru": "Крипто-сервис временно недоступен. Попробуйте через минуту или оплатите картой.",
+        "en": "The crypto service is temporarily unavailable. Try again shortly or pay by card.",
+    },
+    "crypto_err_auth": {
+        "ru": "Ошибка авторизации крипто-сервиса. Попробуйте позже.",
+        "en": "Crypto service authorization error. Please try again later.",
+    },
+    "crypto_err_generic": {
+        "ru": "Ошибка крипто-сервиса. Попробуйте позже или оплатите картой.",
+        "en": "Crypto service error. Try again later or pay by card.",
+    },
+    # ── Buttons ───────────────────────────────────────────────
+    "btn_buy": {"ru": "⭐ Купить звёзды", "en": "⭐ Buy Stars"},
+    "btn_orders": {"ru": "🧾 Мои заказы", "en": "🧾 My orders"},
+    "btn_profile": {"ru": "👤 Профиль", "en": "👤 My profile"},
+    "btn_order_history": {"ru": "🧾 История заказов", "en": "🧾 Order history"},
+    "btn_help": {"ru": "❓ Помощь", "en": "❓ Help"},
+    "btn_language": {"ru": "🌐 Язык / Language", "en": "🌐 Language / Язык"},
+    "btn_referral": {"ru": "🤝 Партнёрка", "en": "🤝 Referrals"},
+    "btn_partner": {"ru": "🧩 Свой бот", "en": "🧩 Your own bot"},
+    "btn_partner_create": {"ru": "➕ Создать бота", "en": "➕ Create a bot"},
+    "btn_partner_bots": {"ru": "⚙️ Мои боты", "en": "⚙️ My bots"},
+    "btn_create_managed": {"ru": "➕ Создать бота", "en": "➕ Create a bot"},
+    "btn_partner_set_markup": {
+        "ru": "@{username} — задать наценку",
+        "en": "@{username} — set markup",
+    },
+    "btn_set_markup": {"ru": "💰 Задать наценку", "en": "💰 Set markup"},
+    "btn_partner_disable": {"ru": "⏸ Выключить", "en": "⏸ Disable"},
+    "btn_partner_enable": {"ru": "▶️ Включить", "en": "▶️ Enable"},
+    "btn_owner_settings": {"ru": "⚙️ Настройки бота", "en": "⚙️ Bot settings"},
+    "btn_admin": {"ru": "🛠 Админка", "en": "🛠 Admin"},
+    "btn_admin_stats": {"ru": "📊 Статистика", "en": "📊 Stats"},
+    "btn_admin_finduser": {"ru": "🔍 Найти пользователя", "en": "🔍 Find user"},
+    "btn_admin_search": {"ru": "🔍 Поиск по ID / @username", "en": "🔍 Search by ID / @username"},
+    "btn_admin_topup": {"ru": "⭐ Пополнить без наценки", "en": "⭐ Top up (no markup)"},
+    "btn_ban": {"ru": "🚫 Забанить", "en": "🚫 Ban"},
+    "btn_unban": {"ru": "✅ Разбанить", "en": "✅ Unban"},
+    "btn_withdraw": {"ru": "💸 Вывести средства", "en": "💸 Withdraw"},
+    "btn_withdrawals": {"ru": "📜 Мои выводы", "en": "📜 My withdrawals"},
+    "btn_method_sbp": {"ru": "🏦 СБП", "en": "🏦 СБП"},
+    "btn_method_crypto": {"ru": "🪙 USDT (TRC20/TON)", "en": "🪙 USDT (TRC20/TON)"},
+    "btn_approve": {"ru": "✅ Подтвердить", "en": "✅ Approve"},
+    "btn_reject": {"ru": "❌ Отклонить", "en": "❌ Reject"},
+    "btn_terms": {"ru": "📄 Оферта", "en": "📄 Terms"},
+    "btn_privacy": {"ru": "🔒 Конфиденциальность", "en": "🔒 Privacy"},
+    "btn_for_myself": {"ru": "⭐ Себе", "en": "⭐ For myself"},
+    "btn_support": {"ru": "💬 Поддержка", "en": "💬 Support"},
+    "btn_custom": {"ru": "✏️ Ввести своё", "en": "✏️ Custom amount"},
+    "btn_cancel": {"ru": "✖️ Отмена", "en": "✖️ Cancel"},
+    "btn_pay": {"ru": "💳 Оплатить", "en": "💳 Pay"},
+    "btn_pay_card": {"ru": "💳 Картой", "en": "💳 Card"},
+    "btn_pay_crypto": {"ru": "💎 Криптой (TON)", "en": "💎 Crypto (TON)"},
+    "btn_goto_pay": {"ru": "💳 Перейти к оплате", "en": "💳 Go to payment"},
+    "btn_check": {"ru": "🔄 Проверить оплату", "en": "🔄 Check payment"},
+    "btn_test_pay": {"ru": "✅ Я оплатил (ТЕСТ)", "en": "✅ I paid (TEST)"},
+    "btn_retry": {"ru": "🔁 Попробовать снова", "en": "🔁 Try again"},
+    "btn_buy_again": {"ru": "⭐ Купить ещё", "en": "⭐ Buy again"},
+    "btn_menu": {"ru": "🏠 В меню", "en": "🏠 Menu"},
+    "btn_back": {"ru": "⬅️ Назад", "en": "⬅️ Back"},
+}
+
+
+def t(key: str, lang: str = DEFAULT_LANG, /, **kwargs: Any) -> str:
+    """Translate ``key`` into ``lang`` with optional ``str.format`` arguments."""
+    entry = TEXTS.get(key)
+    if entry is None:
+        return key
+    template = entry.get(lang) or entry.get(DEFAULT_LANG) or key
+    return template.format(**kwargs) if kwargs else template
+
+
+def status_label(status: str, lang: str = DEFAULT_LANG) -> str:
+    """Localized human label for an order status value."""
+    return t(f"status_{status}", lang) if f"status_{status}" in TEXTS else status
+
+
+def withdrawal_status_label(status: str, lang: str = DEFAULT_LANG) -> str:
+    """Localized human label for a withdrawal status value."""
+    return t(f"wd_status_{status}", lang) if f"wd_status_{status}" in TEXTS else status

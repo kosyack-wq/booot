@@ -1,0 +1,113 @@
+# Markup economics — how not to lose money
+
+This explains how the markups, the referral reward and the partner program
+interact, and what to set so you never sell at a loss. Use
+`scripts/markup_calc.py` to plug in your real WATA numbers.
+
+## The numbers
+
+Per order WATA gives you:
+
+- `minPrice` — minimum sale price per star.
+- `price` — what WATA charges **you** (purchase cost).
+- `commission` — WATA's fee.
+
+The buyer pays `amount`, constrained by WATA:
+
+```
+minPrice*count  ≤  amount  ≤  minPrice*count * 1.5      (markup capped at +50%)
+```
+
+Your margin on an order is `amount − price − commission`.
+
+From a real order in this project (50 stars): `minPrice=1.32`, so
+`minPrice*count = 66.00`; `price+commission ≈ 66.84`; WATA commission ≈ **7–8%**
+of the amount.
+
+## How the markups stack
+
+1. **Operator markup (`MARKUP_PERCENT`)** — your own margin, applied on every bot
+   (yours and partners'). Set on the server.
+2. **Referral 5% (`REFERRAL_PERCENT`)** — paid to a referrer **out of your
+   margin** when a referred user pays on the main bot.
+3. **Partner markup** — a partner-bot owner sets **their own** markup, charged
+   **on top of** your operator markup, so a buyer on a partner bot pays *more*
+   than on your main bot. The partner earns that extra markup, **minus your cut**
+   (`PARTNER_COMMISSION_PERCENT`, default 10% *of the partner's markup*). Because
+   the total is still clamped to WATA's +50%, the partner's markup is capped at
+   `50% − MARKUP_PERCENT` (`PartnerService.max_partner_markup`).
+
+The referral 5% comes out of your margin; the partner markup does **not** — it is
+extra money the buyer pays, of which you even keep a cut. An order never pays both
+a partner and a referrer (see below).
+
+## Key results
+
+- **Break-even markup**: because WATA's commission alone is ~7–8%, selling at the
+  bare minimum (`amount = minPrice*count`) actually loses the commission. You need
+  ~1–2% markup just to cover it (it varies per order — run the calculator).
+
+- **Safe markup (main bot)**: you keep money only if `amount*(1 − 0.05) ≥ price +
+  commission` once a referral applies. For the sample numbers that's ≈ **9%**.
+
+- **At the default 20% markup** (sample numbers): buyer pays 79.20₽, margin
+  12.36₽ → **8.40₽** after a 5% referral. Safe.
+
+- **Partner sales are strictly more profitable for you.** The buyer pays operator
+  + partner markup; you keep your full operator margin **plus** 10% of the partner
+  markup. Example: partner sets 20% on top of your 20%. On 50 stars the buyer pays
+  92.40₽; the extra 13.20₽ is the partner markup, of which the partner gets 11.88₽
+  and you keep 1.32₽ on top of your normal 12.36₽ margin (→ 13.68₽).
+
+- **No multi-level compounding.** Each paid order credits **exactly one** earner:
+  if it came through a partner bot, the partner is paid their markup share;
+  otherwise the buyer's referrer earns 5%. There is no stacking, so "someone
+  invites someone who invites someone" can never multiply a single order's payout.
+
+## Crypto rail (TON via GreenGamePay)
+
+Crypto is a **second, parallel** payment method with its **own** markup
+(`CRYPTO_MARKUP_PERCENT`), independent of the WATA card rail:
+
+- GGP's legacy `ton` JSON field contains **USD**, including its small fee:
+  `0.7525` for 50 stars means $0.7525. The model exposes it as `StarsPrice.usd`.
+  Divide by Fragment checkout's `tonRate` (USD per TON), then apply operator +
+  partner markup and round up to the configured TON step. Invoice uniqueness
+  adds only nanoton increments. Never invoice the raw USD value as TON.
+- The conversion rate refreshes every minute, expires after five minutes,
+  and is required for new quotes. Existing invoices retain their exact reserved
+  amounts for on-chain reconciliation; pre-fix unissued FSM quotes are rejected.
+- **No WATA +50% clamp here** — GGP has no such constraint, so the only ceiling on
+  a partner's crypto markup is what you choose to allow.
+- WATA and GGP have independent wholesale prices, so a lower
+  `CRYPTO_MARKUP_PERCENT` does not by itself guarantee a cheaper final price. The
+  bot always keeps both configured rails available and shows their rates without
+  claiming that crypto is necessarily cheaper.
+- The GGP `rub` field uses the same unconverted numeric input: normalize the
+  purchase cost as `quoted_rub / usd_per_ton`. The provider's TON/RUB rate is
+  `quoted_rub / usd`; the payable RUB equivalent is `ton_due * provider_ton_rub`,
+  including commercial rounding. Earnings use this **₽-equivalent**: the referral 5% and the
+  partner share (minus `PARTNER_COMMISSION_PERCENT`) work exactly as on the card
+  rail, so the wallet/withdrawal math is currency-consistent.
+- Buyer-facing RUB estimates use the **rounded payable TON amount × current
+  TON/RUB market rate**, not GGP's separate `rub` field. TonAPI rates are used
+  only for display; accounting and payouts use the normalized provider values.
+  TON prices and FX refresh every five minutes; estimates older than 15 minutes
+  are omitted while payment in TON remains available. The menu includes the
+  partner markup, matching the purchase quote. RUB estimates exclude wallet fees.
+
+## Recommendation
+
+- Keep **`MARKUP_PERCENT = 20`** with **`PARTNER_COMMISSION_PERCENT = 10`**. That
+  clears the ~8% WATA commission and the 5% referral with margin to spare, and
+  leaves partners room for up to a **30%** markup of their own under the +50% cap.
+- Never let `MARKUP_PERCENT` drop below roughly **`REFERRAL_PERCENT +
+  WATA_commission`** (~13% here) or referred main-bot sales start losing money.
+- `PARTNER_COMMISSION_PERCENT` is your slice of the partner's markup, so it only
+  ever *adds* to your take — raising it earns you more without risk.
+
+Run the calculator with your own order's numbers before changing anything:
+
+```bash
+python scripts/markup_calc.py --min-price 1.32 --count 50 --price 61.12 --commission 5.72
+```
